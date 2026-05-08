@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getDb } from '@/lib/db/client'
-import { runMigrations } from '@/lib/db/schema'
+import { supabase } from '@/lib/db/client'
 import { COIN_UNIVERSE } from '@/lib/universe/coins'
 import { runScan } from '@/lib/signals/scanner'
 import { classifyRegime } from '@/lib/signals/regime'
@@ -14,16 +13,12 @@ export const maxDuration = 300
 
 export async function POST() {
   try {
-    const db = getDb()
-    runMigrations(db)
-
-    // Seed coins
-    const insertCoin = db.prepare(
-      `INSERT OR IGNORE INTO coins (symbol, name, tier, lane, category) VALUES (@symbol, @name, @tier, @lane, @category)`
-    )
-    for (const coin of COIN_UNIVERSE) {
-      insertCoin.run({ symbol: coin.symbol, name: coin.name, tier: coin.tier, lane: coin.lane, category: coin.category })
-    }
+    // Upsert coin universe
+    const coinRows = COIN_UNIVERSE.map(c => ({
+      symbol: c.symbol, name: c.name, tier: c.tier, lane: c.lane, category: c.category,
+    }))
+    const { error: coinErr } = await supabase.from('coins').upsert(coinRows, { onConflict: 'symbol' })
+    if (coinErr) throw coinErr
 
     // Classify regime from BTC
     const btcBars = await fetchOHLCV('BTC/USD', '1Day', 55)
@@ -32,15 +27,6 @@ export async function POST() {
     // Run signal scan
     const candidates = await runScan(regime)
     const shortlist = candidates.slice(0, 8)
-
-    const insertAlert = db.prepare(`
-      INSERT INTO alerts (id, symbol, status, lane, setup_type, catalyst, confidence, liquidity_grade, route_grade, hold_window, suggested_size, stop_price, target_price, signal_score)
-      VALUES (@id, @symbol, @status, @lane, @setupType, @catalyst, @confidence, @liquidityGrade, @routeGrade, @holdWindow, @suggestedSize, @stopPrice, @targetPrice, @signalScore)
-    `)
-
-    const insertVerdict = db.prepare(
-      `INSERT INTO committee_outputs (alert_id, role, verdict, summary) VALUES (@alertId, @role, @verdict, @summary)`
-    )
 
     for (const candidate of shortlist) {
       const { coin, breakout, liquidityScore, frictionScore, totalScore } = candidate
@@ -64,31 +50,32 @@ export async function POST() {
       const suggestedSize = suggestPositionSize(150, 0, committee.confidence, frictionScore)
       const alertId = nanoid()
 
-      insertAlert.run({
+      const { error: alertErr } = await supabase.from('alerts').insert({
         id: alertId,
         symbol: coin.symbol,
         status: committee.status,
         lane: coin.lane,
-        setupType: breakout.setupType,
+        setup_type: breakout.setupType,
         catalyst: committee.mainCatalyst || `${breakout.setupType.replace(/_/g, ' ')} — ${coin.name}`,
         confidence: committee.confidence,
-        liquidityGrade: liquidityScore >= 0.7 ? 'Good' : liquidityScore >= 0.4 ? 'Fair' : 'Poor',
-        routeGrade: frictionGrade(frictionScore),
-        holdWindow: committee.holdWindow,
-        suggestedSize,
-        stopPrice: committee.stopPrice,
-        targetPrice: committee.targetPrice,
-        signalScore: totalScore,
+        liquidity_grade: liquidityScore >= 0.7 ? 'Good' : liquidityScore >= 0.4 ? 'Fair' : 'Poor',
+        route_grade: frictionGrade(frictionScore),
+        hold_window: committee.holdWindow,
+        suggested_size: suggestedSize,
+        stop_price: committee.stopPrice,
+        target_price: committee.targetPrice,
+        signal_score: totalScore,
       })
+      if (alertErr) throw alertErr
 
-      for (const verdict of committee.verdicts) {
-        insertVerdict.run({
-          alertId,
-          role: verdict.role,
-          verdict: verdict.recommendation,
-          summary: verdict.summary,
-        })
-      }
+      const verdictRows = committee.verdicts.map(v => ({
+        alert_id: alertId,
+        role: v.role,
+        verdict: v.recommendation,
+        summary: v.summary,
+      }))
+      const { error: verdictErr } = await supabase.from('committee_outputs').insert(verdictRows)
+      if (verdictErr) throw verdictErr
     }
 
     return NextResponse.json({ ok: true, scanned: shortlist.length, regime })

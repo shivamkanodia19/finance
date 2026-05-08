@@ -1,27 +1,36 @@
 import { NextResponse } from 'next/server'
-import { getDb } from '@/lib/db/client'
+import { supabase } from '@/lib/db/client'
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params
-    const db = getDb()
 
-    const alert = db.prepare(`
-      SELECT a.*, c.name, c.category, c.tier
-      FROM alerts a
-      JOIN coins c ON a.symbol = c.symbol
-      WHERE a.id = ?
-    `).get(id)
+    const { data: alert, error } = await supabase
+      .from('alerts')
+      .select(`*, coins ( name, category, tier )`)
+      .eq('id', id)
+      .single()
 
-    if (!alert) {
+    if (error || !alert) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
     }
 
-    const verdicts = db.prepare(
-      `SELECT role, verdict, summary FROM committee_outputs WHERE alert_id = ? ORDER BY id`
-    ).all(id)
+    const { data: verdicts } = await supabase
+      .from('committee_outputs')
+      .select('role, verdict, summary')
+      .eq('alert_id', id)
+      .order('id', { ascending: true })
 
-    return NextResponse.json({ ...alert, verdicts })
+    const flatAlert = {
+      ...alert,
+      name: (alert.coins as { name: string; category: string; tier: string } | null)?.name ?? '',
+      category: (alert.coins as { name: string; category: string; tier: string } | null)?.category ?? '',
+      tier: (alert.coins as { name: string; category: string; tier: string } | null)?.tier ?? '',
+      coins: undefined,
+      verdicts: verdicts ?? [],
+    }
+
+    return NextResponse.json(flatAlert)
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
