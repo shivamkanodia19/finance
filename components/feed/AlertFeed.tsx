@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { AlertCard } from './AlertCard'
 import { FilterBar } from './FilterBar'
@@ -12,28 +12,31 @@ export function AlertFeed() {
   const [scanning, setScanning] = useState(false)
   const [statusFilter, setStatusFilter] = useState('all')
   const [laneFilter, setLaneFilter] = useState('all')
+  const [refreshKey, setRefreshKey] = useState(0)
   const router = useRouter()
-
-  const fetchAlerts = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/alerts')
-      const data = await res.json()
-      setAlerts(Array.isArray(data) ? data : [])
-    } catch {
-      setAlerts([])
-    } finally {
-      setLoading(false)
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      setLoading(true)
+      try {
+        const res = await fetch('/api/alerts')
+        const data = await res.json()
+        if (!cancelled) setAlerts(Array.isArray(data) ? data : [])
+      } catch {
+        if (!cancelled) setAlerts([])
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     }
-  }, [])
-
-  useEffect(() => { fetchAlerts() }, [fetchAlerts])
+    load()
+    return () => { cancelled = true }
+  }, [refreshKey])
 
   async function triggerScan() {
     setScanning(true)
     try {
       await fetch('/api/scan', { method: 'POST' })
-      await fetchAlerts()
+      setRefreshKey(k => k + 1)
     } finally {
       setScanning(false)
     }

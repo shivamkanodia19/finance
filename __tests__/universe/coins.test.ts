@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { COIN_UNIVERSE, getTierA, getTierB, getByLane, getScanUniverse } from '@/lib/universe/coins'
+import { COIN_UNIVERSE, getTierA, getByLane, getScanUniverse } from '@/lib/universe/coins'
 
 describe('coin universe', () => {
   it('has at least 30 coins', () => {
