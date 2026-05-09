@@ -9,7 +9,7 @@ import { suggestPositionSize } from '@/lib/risk/engine'
 import { frictionGrade } from '@/lib/signals/friction'
 import { nanoid } from 'nanoid'
 
-export const maxDuration = 300
+export const maxDuration = 60
 
 export async function POST() {
   try {
