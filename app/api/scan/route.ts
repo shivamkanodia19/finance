@@ -26,7 +26,7 @@ export async function POST() {
 
     // Run signal scan
     const candidates = await runScan(regime)
-    const shortlist = candidates.slice(0, 8)
+    const shortlist = candidates.slice(0, 3)
 
     for (const candidate of shortlist) {
       const { coin, breakout, liquidityScore, frictionScore, totalScore } = candidate

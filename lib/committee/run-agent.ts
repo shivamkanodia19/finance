@@ -12,7 +12,7 @@ export async function runAgent(
   const userMessage = buildUserMessage(coinContext, priorVerdicts, role)
 
   const response = await client.messages.create({
-    model: 'claude-opus-4-7',
+    model: 'claude-haiku-4-5-20251001',
     max_tokens: 2048,
     system: getSystemPrompt(role),
     tools: [{ type: 'web_search_20250305' as const, name: 'web_search' }],

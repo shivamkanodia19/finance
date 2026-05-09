@@ -1,35 +1,41 @@
 import { runAgent } from './run-agent'
 import type { AgentRole, AgentVerdict, CoinContext, CommitteeOutput, CommitteeStatus } from './types'
 
-const SEQUENTIAL_ROLES: AgentRole[] = [
-  'scout', 'researcher', 'bull', 'bear', 'execution_analyst', 'risk_manager', 'judge',
-]
-
 export async function runCommittee(ctx: CoinContext): Promise<CommitteeOutput> {
-  const verdicts: AgentVerdict[] = []
+  // Round 1: scout + researcher in parallel (no prior context needed)
+  const round1 = await Promise.all([
+    runAgent('scout', ctx, []),
+    runAgent('researcher', ctx, []),
+  ])
 
-  for (const role of SEQUENTIAL_ROLES) {
-    const priorForRole = role === 'judge' ? verdicts : verdicts.filter(v => v.role !== 'judge')
-    const verdict = await runAgent(role, ctx, priorForRole)
-    verdicts.push(verdict)
-  }
+  // Round 2: bull, bear, execution_analyst, risk_manager in parallel (see round 1)
+  const round2 = await Promise.all([
+    runAgent('bull', ctx, round1),
+    runAgent('bear', ctx, round1),
+    runAgent('execution_analyst', ctx, round1),
+    runAgent('risk_manager', ctx, round1),
+  ])
 
-  const judgeRaw = verdicts.find(v => v.role === 'judge') as AgentVerdict & Record<string, unknown>
+  const allVerdicts: AgentVerdict[] = [...round1, ...round2]
+
+  // Round 3: judge sees everything
+  const judgeVerdict = await runAgent('judge', ctx, allVerdicts)
+  const verdicts = [...allVerdicts, judgeVerdict]
+
   const bullVerdict = verdicts.find(v => v.role === 'bull')
   const bearVerdict = verdicts.find(v => v.role === 'bear')
-
   const disagreementScore = bullVerdict && bearVerdict
     ? Math.abs(bullVerdict.confidence - bearVerdict.confidence)
     : 0
 
-  const status = (judgeRaw as Record<string, unknown>)?.status as CommitteeStatus ?? inferStatus(verdicts)
-  const confidence = (judgeRaw as Record<string, unknown>)?.confidence as number ?? 0.5
-  const judgeData = judgeRaw as Record<string, unknown>
+  const judgeData = judgeVerdict as AgentVerdict & Record<string, unknown>
+  const status = (judgeData?.status as CommitteeStatus) ?? inferStatus(verdicts)
+  const confidence = (judgeData?.confidence as number) ?? 0.5
 
   return {
     symbol: ctx.symbol,
     status,
-    thesisSummary: (judgeData?.thesisSummary as string) ?? judgeRaw.summary,
+    thesisSummary: (judgeData?.thesisSummary as string) ?? judgeVerdict.summary,
     mainCatalyst: (judgeData?.mainCatalyst as string) ?? '',
     mainBearObjection: (judgeData?.mainBearObjection as string) ?? '',
     executionNote: (judgeData?.executionNote as string) ?? '',

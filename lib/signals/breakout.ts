@@ -35,7 +35,7 @@ export function detectBreakout(symbol: string, bars: OHLCVBar[]): BreakoutSignal
     setupType = 'breakout_continuation'
     const breakoutStrength = (currentClose - highestHigh20) / highestHigh20
     score = Math.min(1, 0.4 + breakoutStrength * 2 + Math.min(0.3, (volumeRatio - 1) * 0.15) + volumeQuality)
-  } else if (currentClose > highestHigh20 * 0.97 && atrPct < 0.03) {
+  } else if (currentClose > highestHigh20 * 0.93) {
     setupType = 'range_compression'
     score = 0.3
   }

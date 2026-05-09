@@ -6,14 +6,23 @@ import { AlertCard } from './AlertCard'
 import { FilterBar } from './FilterBar'
 import type { Alert } from '@/types'
 
+interface ScanResult {
+  ok: boolean
+  scanned?: number
+  regime?: string
+  error?: string
+}
+
 export function AlertFeed() {
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [loading, setLoading] = useState(true)
   const [scanning, setScanning] = useState(false)
+  const [scanResult, setScanResult] = useState<ScanResult | null>(null)
   const [statusFilter, setStatusFilter] = useState('all')
   const [laneFilter, setLaneFilter] = useState('all')
   const [refreshKey, setRefreshKey] = useState(0)
   const router = useRouter()
+
   useEffect(() => {
     let cancelled = false
     async function load() {
@@ -34,9 +43,14 @@ export function AlertFeed() {
 
   async function triggerScan() {
     setScanning(true)
+    setScanResult(null)
     try {
-      await fetch('/api/scan', { method: 'POST' })
-      setRefreshKey(k => k + 1)
+      const res = await fetch('/api/scan', { method: 'POST' })
+      const data = await res.json()
+      setScanResult(data)
+      if (res.ok) setRefreshKey(k => k + 1)
+    } catch {
+      setScanResult({ ok: false, error: 'Network error — scan failed' })
     } finally {
       setScanning(false)
     }
@@ -52,21 +66,41 @@ export function AlertFeed() {
 
   return (
     <div className="max-w-lg mx-auto">
-      <div className="px-4 py-4 flex items-center justify-between border-b border-zinc-800">
+      {/* Header */}
+      <div className="px-4 py-4 flex items-center justify-between border-b border-rh-border">
         <div>
-          <h1 className="text-lg font-bold">Signal Feed</h1>
+          <h1 className="text-lg font-heading font-bold text-rh-text">Signal Feed</h1>
           {actionableCount > 0 && (
-            <p className="text-xs text-emerald-400">{actionableCount} actionable</p>
+            <p className="text-xs text-rh-green font-medium">{actionableCount} actionable</p>
           )}
         </div>
         <button
           onClick={triggerScan}
           disabled={scanning}
-          className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+          className="px-4 py-2 bg-rh-text text-white disabled:opacity-50 rounded-lg text-sm font-medium transition-all hover:bg-rh-text/80 cursor-pointer"
         >
           {scanning ? 'Scanning…' : 'Run Scan'}
         </button>
       </div>
+
+      {/* Scan feedback banner */}
+      {scanResult && (
+        <div className={`px-4 py-2 text-xs border-b ${
+          scanResult.ok
+            ? 'bg-green-50 border-green-100 text-green-700'
+            : 'bg-red-50 border-red-100 text-red-700'
+        }`}>
+          {scanResult.ok
+            ? `Found ${scanResult.scanned} signal${scanResult.scanned !== 1 ? 's' : ''} · Market: ${scanResult.regime ?? '—'}`
+            : `Scan failed: ${scanResult.error ?? 'unknown error'}`}
+        </div>
+      )}
+
+      {scanResult?.ok && scanResult.scanned === 0 && (
+        <div className="px-4 py-2 text-xs border-b bg-amber-50 border-amber-100 text-amber-700">
+          No breakout setups detected. Market may be quiet — try again later.
+        </div>
+      )}
 
       <FilterBar
         activeStatus={statusFilter}
@@ -78,12 +112,12 @@ export function AlertFeed() {
       <div className="px-4 py-4 space-y-3">
         {loading ? (
           Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-32 rounded-xl bg-zinc-900 animate-pulse" />
+            <div key={i} className="h-32 rounded-xl bg-rh-surface animate-pulse border border-rh-border" />
           ))
         ) : filtered.length === 0 ? (
           <div className="py-16 text-center">
-            <p className="text-zinc-500 text-sm">No alerts match your filters.</p>
-            <p className="text-zinc-600 text-xs mt-1">
+            <p className="text-rh-muted text-sm">No alerts match your filters.</p>
+            <p className="text-rh-muted/60 text-xs mt-1">
               {alerts.length === 0 ? 'Run a scan to generate alerts.' : 'Try clearing filters.'}
             </p>
           </div>
