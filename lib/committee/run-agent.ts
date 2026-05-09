@@ -30,13 +30,16 @@ export async function runAgent(
 
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>
+    // Spread ALL parsed fields so orchestrator can access judge-specific fields
+    // (status, thesisSummary, mainCatalyst, stopPricePct, etc.) without stripping them
     return {
+      ...parsed,
       role: (parsed.role as AgentRole) ?? role,
       summary: (parsed.summary as string) ?? '',
       keyPoints: (parsed.keyPoints as string[]) ?? [],
       confidence: Math.min(1, Math.max(0, (parsed.confidence as number) ?? 0.5)),
       recommendation: (parsed.recommendation as AgentVerdict['recommendation']) ?? 'neutral',
-    }
+    } as AgentVerdict & Record<string, unknown>
   } catch {
     throw new Error(`Agent ${role} returned invalid JSON: ${raw.slice(0, 300)}`)
   }
