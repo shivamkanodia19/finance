@@ -25,8 +25,7 @@ export async function runAgent(
     throw new Error(`Agent ${role} returned no text content`)
   }
 
-  // Strip markdown fences if model wraps in them despite instructions
-  const raw = textBlock.text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
+  const raw = extractJson(textBlock.text)
 
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>
@@ -43,6 +42,22 @@ export async function runAgent(
   } catch {
     throw new Error(`Agent ${role} returned invalid JSON: ${raw.slice(0, 300)}`)
   }
+}
+
+// Haiku often wraps JSON in conversational prose after web search.
+// This finds the outermost JSON object in the response, regardless of surrounding text.
+function extractJson(text: string): string {
+  // 1. Try a fenced code block first (```json ... ```)
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
+  if (fenceMatch) return fenceMatch[1].trim()
+
+  // 2. Find outermost { ... } — handles "Based on results, {...}"
+  const first = text.indexOf('{')
+  const last = text.lastIndexOf('}')
+  if (first !== -1 && last > first) return text.slice(first, last + 1).trim()
+
+  // 3. Return trimmed text and let JSON.parse report the error
+  return text.trim()
 }
 
 function buildUserMessage(ctx: CoinContext, priorVerdicts: AgentVerdict[], role: AgentRole): string {
