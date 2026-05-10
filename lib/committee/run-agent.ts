@@ -4,23 +4,34 @@ import type { AgentRole, AgentVerdict, CoinContext } from './types'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
+// Only Scout and Researcher benefit from live web search.
+// Synthesis agents (Bull/Bear/Execution/Risk/Judge) work from prior verdicts only —
+// removing web_search ensures they return clean JSON without pre-tool thinking prose.
+const WEB_SEARCH_ROLES: AgentRole[] = ['scout', 'researcher']
+
 export async function runAgent(
   role: AgentRole,
   coinContext: CoinContext,
   priorVerdicts: AgentVerdict[]
 ): Promise<AgentVerdict> {
+  const useWebSearch = WEB_SEARCH_ROLES.includes(role)
   const userMessage = buildUserMessage(coinContext, priorVerdicts, role)
 
   const response = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 2048,
     system: getSystemPrompt(role),
-    tools: [{ type: 'web_search_20250305' as const, name: 'web_search' }],
+    ...(useWebSearch
+      ? { tools: [{ type: 'web_search_20250305' as const, name: 'web_search' }] }
+      : {}),
     messages: [{ role: 'user', content: userMessage }],
   })
 
-  // Find the text block — may come after tool_use blocks
-  const textBlock = response.content.find(b => b.type === 'text')
+  // When web_search is active, Haiku emits a pre-tool thinking text block BEFORE
+  // the search runs ("I'll research this..."), then the actual JSON response AFTER.
+  // Always use the LAST text block to get the post-search response.
+  const textBlocks = response.content.filter(b => b.type === 'text')
+  const textBlock = textBlocks.at(-1)
   if (!textBlock || textBlock.type !== 'text') {
     throw new Error(`Agent ${role} returned no text content`)
   }
@@ -28,36 +39,36 @@ export async function runAgent(
   const raw = extractJson(textBlock.text)
 
   try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>
-    // Spread ALL parsed fields so orchestrator can access judge-specific fields
-    // (status, thesisSummary, mainCatalyst, stopPricePct, etc.) without stripping them
-    return {
-      ...parsed,
-      role: (parsed.role as AgentRole) ?? role,
-      summary: (parsed.summary as string) ?? '',
-      keyPoints: (parsed.keyPoints as string[]) ?? [],
-      confidence: Math.min(1, Math.max(0, (parsed.confidence as number) ?? 0.5)),
-      recommendation: (parsed.recommendation as AgentVerdict['recommendation']) ?? 'neutral',
-    } as AgentVerdict & Record<string, unknown>
+    return parseVerdict(JSON.parse(raw) as Record<string, unknown>, role)
   } catch {
-    throw new Error(`Agent ${role} returned invalid JSON: ${raw.slice(0, 300)}`)
+    throw new Error(`Agent ${role} returned invalid JSON: ${raw.slice(0, 400)}`)
   }
 }
 
-// Haiku often wraps JSON in conversational prose after web search.
-// This finds the outermost JSON object in the response, regardless of surrounding text.
+// Extracts a JSON object from potentially mixed text.
+// Handles: plain JSON, ```json fences, prose-wrapped JSON ("Based on research, {...}")
 function extractJson(text: string): string {
-  // 1. Try a fenced code block first (```json ... ```)
+  // 1. Fenced code block
   const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
   if (fenceMatch) return fenceMatch[1].trim()
 
-  // 2. Find outermost { ... } — handles "Based on results, {...}"
+  // 2. Outermost { ... } — handles "Based on results, {...}" or trailing prose
   const first = text.indexOf('{')
   const last = text.lastIndexOf('}')
   if (first !== -1 && last > first) return text.slice(first, last + 1).trim()
 
-  // 3. Return trimmed text and let JSON.parse report the error
   return text.trim()
+}
+
+function parseVerdict(parsed: Record<string, unknown>, role: AgentRole): AgentVerdict {
+  return {
+    ...parsed,
+    role: (parsed.role as AgentRole) ?? role,
+    summary: (parsed.summary as string) ?? '',
+    keyPoints: (parsed.keyPoints as string[]) ?? [],
+    confidence: Math.min(1, Math.max(0, (parsed.confidence as number) ?? 0.5)),
+    recommendation: (parsed.recommendation as AgentVerdict['recommendation']) ?? 'neutral',
+  } as AgentVerdict & Record<string, unknown>
 }
 
 function buildUserMessage(ctx: CoinContext, priorVerdicts: AgentVerdict[], role: AgentRole): string {

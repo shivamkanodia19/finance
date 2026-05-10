@@ -2,24 +2,32 @@ import { runAgent } from './run-agent'
 import type { AgentRole, AgentVerdict, CoinContext, CommitteeOutput, CommitteeStatus } from './types'
 
 export async function runCommittee(ctx: CoinContext): Promise<CommitteeOutput> {
-  // Round 1: scout + researcher in parallel (no prior context needed)
-  const round1 = await Promise.all([
+  // Round 1: scout + researcher in parallel
+  const round1Results = await Promise.allSettled([
     runAgent('scout', ctx, []),
     runAgent('researcher', ctx, []),
   ])
+  const round1 = settledVerdicts(round1Results, ['scout', 'researcher'])
 
-  // Round 2: bull, bear, execution_analyst, risk_manager in parallel (see round 1)
-  const round2 = await Promise.all([
+  // Round 2: synthesis agents in parallel — they see round 1 but don't need web search
+  const round2Results = await Promise.allSettled([
     runAgent('bull', ctx, round1),
     runAgent('bear', ctx, round1),
     runAgent('execution_analyst', ctx, round1),
     runAgent('risk_manager', ctx, round1),
   ])
+  const round2 = settledVerdicts(round2Results, ['bull', 'bear', 'execution_analyst', 'risk_manager'])
 
   const allVerdicts: AgentVerdict[] = [...round1, ...round2]
 
-  // Round 3: judge sees everything
-  const judgeVerdict = await runAgent('judge', ctx, allVerdicts)
+  // Round 3: judge synthesizes everything
+  let judgeVerdict: AgentVerdict
+  try {
+    judgeVerdict = await runAgent('judge', ctx, allVerdicts)
+  } catch {
+    judgeVerdict = fallbackVerdict('judge', 'Judge analysis unavailable.')
+  }
+
   const verdicts = [...allVerdicts, judgeVerdict]
 
   const bullVerdict = verdicts.find(v => v.role === 'bull')
@@ -51,10 +59,30 @@ export async function runCommittee(ctx: CoinContext): Promise<CommitteeOutput> {
   }
 }
 
+// Extracts successful verdicts from Promise.allSettled results, using a fallback for failures.
+function settledVerdicts(
+  results: PromiseSettledResult<AgentVerdict>[],
+  roles: AgentRole[]
+): AgentVerdict[] {
+  return results.map((result, i) => {
+    if (result.status === 'fulfilled') return result.value
+    console.error(`Agent ${roles[i]} failed:`, result.reason)
+    return fallbackVerdict(roles[i], `${roles[i]} analysis unavailable.`)
+  })
+}
+
+function fallbackVerdict(role: AgentRole, summary: string): AgentVerdict {
+  const recommendation =
+    role === 'bull' ? 'bullish' :
+    role === 'bear' ? 'bearish' :
+    'neutral'
+  return { role, summary, keyPoints: [], confidence: 0.5, recommendation }
+}
+
 function inferStatus(verdicts: AgentVerdict[]): CommitteeStatus {
   const bullish = verdicts.filter(v => v.recommendation === 'bullish').length
   const bearish = verdicts.filter(v => v.recommendation === 'bearish').length
-  if (bullish >= 4) return 'actionable'
+  if (bullish >= 3) return 'actionable'
   if (bearish >= 3) return 'reject'
   return 'watch'
 }
