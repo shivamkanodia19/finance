@@ -46,9 +46,14 @@ export function AlertFeed() {
     setScanResult(null)
     try {
       const res = await fetch('/api/scan', { method: 'POST' })
-      const data = await res.json()
+      let data: ScanResult
+      try {
+        data = await res.json()
+      } catch {
+        data = { ok: false, error: res.status === 504 ? 'Scan timed out — try again' : `HTTP ${res.status}` }
+      }
       setScanResult(data)
-      if (res.ok) setRefreshKey(k => k + 1)
+      if (res.ok && data.ok) setRefreshKey(k => k + 1)
     } catch {
       setScanResult({ ok: false, error: 'Network error — scan failed' })
     } finally {
